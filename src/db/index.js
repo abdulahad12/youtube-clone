@@ -11,7 +11,6 @@ const ConnectDb = async () => {
 
     // console.log(dbinstant);
     // console.log(process);
-
     process.on("error", (error) => {
       console.log("app/server is not running properly", error);
       throw error;

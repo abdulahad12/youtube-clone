@@ -2,7 +2,6 @@ import express from "express";
 import dotenv from "dotenv";
 // import { DB_NAME } from "./constants.js";
 import ConnectDb from "./db/index.js";
-
 dotenv.config({ path: "./.env" });
 const app = express();
 
@@ -36,5 +35,4 @@ ConnectDb()
   })
   .catch((error) => {
     console.log("DB Connection Failed", error);
-    throw error;
   });
