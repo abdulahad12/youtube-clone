@@ -1,5 +1,12 @@
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
+import { ApiError } from "../utils/apiError.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Get the current directory (equivalent to __dirname in CommonJS)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Allowed file types (you can adjust as needed)
 const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
@@ -22,12 +29,20 @@ const fileFilter = (req, file, cb) => {
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    console.log(file, "from multer middleware");
+    // console.log(file, "from multer middleware");
+    const uploadPath = path.join(
+      __dirname,
+      "..",
+      "..",
+      "public",
+      "temp",
+      "uploads"
+    );
 
-    cb(null, "../../public/temp/uploads/");
+    cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
-    const uniqueName = file.originalName + uuidv4();
+    const uniqueName = uuidv4() + "-" + file.originalname;
     cb(null, uniqueName);
   },
 });
