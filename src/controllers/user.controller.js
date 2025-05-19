@@ -4,6 +4,8 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { User } from "../models/user.model.js";
 import { uploadToCloudinary } from "../utils/cloudinary.js";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+import fs from "fs";
 
 const registerUserController = asyncHandler(async (req, res) => {
   console.log(req.files, "req.file");
@@ -187,7 +189,7 @@ const logoutUserController = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, "User Logged out successfully", {}));
 });
 
-const refreshAccessTokenController = asyncHandler(async (req, res, next) => {
+const refreshAccessTokenController = asyncHandler(async (req, res) => {
   const inCommingToken = req.cookies?.refreshToken || req.body?.refreshToken;
   console.log(inCommingToken, "inCommingToken");
 
@@ -241,9 +243,263 @@ const refreshAccessTokenController = asyncHandler(async (req, res, next) => {
     );
 });
 
+const correctPasswordController = asyncHandler(async (req, res) => {
+  console.log(req.body, "req.body");
+
+  const { oldPassword, newPassword, confirmPassword } = req.body;
+
+  if (!oldPassword || !newPassword || !confirmPassword) {
+    throw new ApiError(400, "All fields are required");
+  }
+  if (newPassword !== confirmPassword) {
+    throw new ApiError(400, "Passwords do not match");
+  }
+
+  const user = await User.findById(req.user?.id);
+  console.log(user, "user from correctPassword cotroller");
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  const isPasswordValid = await user.isPasswordCorrect(oldPassword);
+
+  if (!isPasswordValid) {
+    throw new ApiError(401, "Invalid Password");
+  }
+
+  user.password = newPassword;
+  await user.save({ validateBeforeSave: false });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, "Password changed successfully", {}));
+});
+
+const getCurrentUserController = asyncHandler(async (req, res) => {
+  res
+    .status(200)
+    .json(new ApiResponse(200, "User found successfully", req.user));
+});
+
+const updateAccountDetailController = asyncHandler(async (req, res) => {
+  const { fullname, email } = req.body;
+
+  if (!fullname || !email) {
+    throw new ApiError(400, "All fields are required");
+  }
+
+  const user = await User.findByIdAndUpdate(
+    req.user.id,
+    {
+      fullname,
+      email,
+    },
+    { new: true }
+  ).select("-password");
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+  res.status(200).json(new ApiResponse(200, "User updated successfully", user));
+});
+
+const updateUserAvatarController = asyncHandler(async (req, res) => {
+  const avatarLocalPath = req.file.path;
+
+  if (!avatarLocalPath) {
+    throw new ApiError(400, "Avatar file is missing");
+  }
+
+  const avatar = await uploadToCloudinary(avatarLocalPath);
+  if (!avatar?.url) {
+    throw new ApiError(
+      400,
+      "Error while uploading Avatar file on cloudinary  "
+    );
+  }
+
+  // fs.unlinkSync(avatarLocalPath);
+
+  const user = await User.findByIdAndUpdate(
+    req.user.id,
+    {
+      avatar: avatar.url,
+    },
+    { new: true }
+  ).select("-password");
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, "User Avatar updated successfully", user));
+});
+
+const updateUserCoverImageController = asyncHandler(async (req, res) => {
+  const coverImageLocalPath = req.file.path;
+
+  if (!coverImageLocalPath) {
+    throw new ApiError(400, "Cover Image file is missing");
+  }
+  const coverImage = await uploadToCloudinary(coverImageLocalPath);
+
+  if (!coverImage?.url) {
+    throw new ApiError(
+      400,
+      "Error while uploading Cover Image file on cloudinary"
+    );
+  }
+
+  // fs.unlinkSync(coverImageLocalPath);
+
+  const user = await User.findByIdAndUpdate(
+    req.user.id,
+    {
+      coverImage: coverImage.url,
+    },
+    { new: true }
+  ).select("-password");
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, "User Cover Image updated successfully", user));
+});
+
+const getUserChannelProfileController = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+  if (!username?.trim()) {
+    throw new ApiError(400, "Username is missing");
+  }
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username?.toLowerCase(),
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers",
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        subscriberCount: {
+          $size: "$subscribers",
+        },
+        channelSubscribedToCount: {
+          $size: "$subscribedTo",
+        },
+        isSubscried: {
+          $cond: {
+            if: { $in: [req.user?.id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        fullname: 1,
+        username: 1,
+        email: 1,
+        avatar: 1,
+        coverImage: 1,
+        subscriberCount: 1,
+        channelSubscribedToCount: 1,
+        isSubscried: 1,
+      },
+    },
+  ]);
+
+  // console.log(channel, "channel");
+
+  if (!channel?.length) {
+    throw new ApiError(404, "Channel does not exist/found");
+  }
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, "Channel found successfully", channel[0]));
+});
+
+const getWatchHistoryController = asyncHandler(async (req, res) => {
+  const user = await User.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(req.user.id),
+      },
+    },
+    {
+      $lookup: {
+        from: "videos",
+        localField: "watchHistory",
+        foreignField: "_id",
+        as: "watchHistory",
+        pipeline: [
+          {
+            $lookup: {
+              from: "users",
+              localField: "owner",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [
+                {
+                  $project: {
+                    fullname: 1,
+                    username: 1,
+                    avatar: 1,
+                  },
+                },
+                {
+                  $addFields: {
+                    owner: {
+                      $first: "$owner",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ]);
+
+  if (!user?.length) {
+    throw new ApiError(404, "User does not exist/found");
+  }
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        "Watch History found successfully",
+        user[0].watchHistory
+      )
+    );
+});
 export {
   registerUserController,
   loginUserController,
   logoutUserController,
   refreshAccessTokenController,
+  correctPasswordController,
+  getCurrentUserController,
+  updateAccountDetailController,
+  updateUserAvatarController,
+  updateUserCoverImageController,
+  getUserChannelProfileController,
+  getWatchHistoryController,
 };
